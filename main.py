@@ -94,7 +94,7 @@ def lock_turret(delay):
                 sleep(0.2) # Delay after stopping
                 direction *= -1 # Switch scan direction and resume scanning
                 ultraMotor.run_forever(speed_sp = direction * SPEED)
-        sleep(0.05)
+        sleep(0.02)
 
 # Found start of target, store it into angle_target
 def found_target(): # (replaced the averaging algorithm with a delay)
