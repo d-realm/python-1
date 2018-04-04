@@ -70,6 +70,7 @@ def lock_turret(delay):
                 sleep(0.05)
             # Continue rotating (and scanning) in direction
             ultraMotor.run_forever(speed_sp = direction * SPEED)
+            direction *= -1 # Reset to previous direction
         # Then keep rotating and scanning for a target within SEARCH_DISTANCE
         distance = ultraSensor.value() / 10 # Convert to centimetres
         # Found a target! Store in angle_target
@@ -98,7 +99,7 @@ def lock_turret(delay):
 # Found start of target, store it into angle_target
 def found_target(): # (replaced the averaging algorithm with a delay)
     global angle_target
-    sleep(0.1) # Continue rotating briefly, estimating centre of target
+    # sleep(0.1) # Continue rotating briefly, estimating centre of target
     angle_target = ultraMotor.position
     ultraMotor.stop()
     print("turret: found target")
