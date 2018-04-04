@@ -22,6 +22,42 @@ colorSensor = ColorSensor()
 assert colorSensor.connected, "Error: Color sensor not connected"
 colorSensor.mode = "COL-COLOR"
 
+# BASIC FUNCTIONS
+CLOCKWISE = 1
+ANTICLOCKWISE = -1
+# To drive
+def drive(left, right, time):
+    if (time == 0):
+        leftMotor.run_direct(duty_cycle_sp = -left)
+        rightMotor.run_direct(duty_cycle_sp = -right)
+    else:
+        leftMotor.run_timed(speed_sp=left, time_sp=time*1000)
+        rightMotor.run_timed(speed_sp=right, time_sp=time*1000)
+
+def drift():
+    drive(55, 100, 1)
+
+# Stops large motors
+def brake():
+    leftMotor.stop(stop_action='brake')
+    rightMotor.stop(stop_action='brake')
+
+def turn(dir, angle):
+    """
+    Turn in the direction opposite to the contact.
+    """
+
+    # We want to turn the robot wheels in opposite directions
+    rightMotor.run_timed(speed_sp=dir*-750, time_sp=250*(angle / 50))
+    leftMotor.run_timed(speed_sp=dir*750, time_sp=250*(angle / 50))
+
+    # Wait until both motors are stopped:
+    while any(m.state for m in (leftMotor, rightMotor)):
+        sleep(0.1)
+
+
+
+
 # Connect ultrasonic sensor
 # https://sites.google.com/site/ev3python/learn_ev3_python/using-sensors
 # https://media.readthedocs.org/pdf/ev3dev-lang/latest/ev3dev-lang.pdf
@@ -32,7 +68,9 @@ ultraSensor.mode = "US-DIST-CM" # This is actually in millimetres
 # <HANDLE_TURRET> DONE! (don't touch unless you know what you're doing - Lucas)
 # Input constants (they don't need to be global after all!)
 SEARCH_DISTANCE = 50 # In centimetres
-SPEED = 360 # In degrees per second
+REVOLUTION = 216
+SPEED = REVOLUTION * 1.5 # In degrees per second
+
 # Output variable
 angle_target = 0 # The angle (in degrees) that a target was last found at
 # 0 = straight ahead, -90 to the left, 90 to the right etc.
@@ -56,7 +94,7 @@ def lock_turret(delay):
     ultraMotor.run_forever(speed_sp = direction * SPEED) # Scan to the left
     while True: # Huge loop
         # Prevent tangling of ultrasonic sensor cable
-        if (ultraMotor.position > 360 or ultraMotor.position < -360):
+        if (ultraMotor.position > REVOLUTION or ultraMotor.position < -REVOLUTION):
             print("turret: fix tangle")
             ultraMotor.stop() # Stop further rotation
             sleep(0.2) # Delay after stopping
@@ -64,7 +102,7 @@ def lock_turret(delay):
                 direction = -1 # Rotate anticlockwise
             else:
                 direction = 1 # Rotate clockwise
-            ultraMotor.position_sp = direction * 180 # Rotate 180 degrees
+            ultraMotor.position_sp = direction * REVOLUTION /2 # Rotate 180 degrees
             ultraMotor.run_to_abs_pos(speed_sp = SPEED)
             while any(ultraMotor.state): # Wait until finished rotating
                 sleep(0.05)
@@ -81,7 +119,7 @@ def lock_turret(delay):
         elif (distance > SEARCH_DISTANCE and found == True):
             print("turret: lost target")
             # Keep scanning briefly in the direction it was scanning before
-            ultraMotor.position_sp = ultraMotor.position + direction * 45
+            ultraMotor.position_sp = ultraMotor.position + direction * REVOLUTION /8
             ultraMotor.run_to_abs_pos(speed_sp = SPEED)
             found = False
             while any(ultraMotor.state):
@@ -106,12 +144,16 @@ def found_target(): # (replaced the averaging algorithm with a delay)
 # Can now obtain location of target from angle_target
 # </HANDLE_TURRET>
 
-#def chase_target():
-    #global angle_target
-    #if (angle_target < 0):
+def chase_target():
+    global angle_target
+    if (angle_target < 0):
         # Turn robot clockwise
-    #else:
+        turn(CLOCKWISE, angle_target*-1)
+    else:
         # Turn robot anticlockwise
+        turn(ANTICLOCKWISE, angle_target)
+
+    drive(100, 100, 0)
 
 def start():
     print("Enter right motor speed then left motor speed.")
@@ -124,67 +166,63 @@ def start():
     rightMotor.run_direct(duty_cycle_sp = -x)
     leftMotor.run_direct(duty_cycle_sp = -y)
 
-def turn(dir):
-    """
-    Turn in the direction opposite to the contact.
-    """
-
-    # We want to turn the robot wheels in opposite directions
-    rightMotor.run_timed(speed_sp=dir*-750, time_sp=250)
-    leftMotor.run_timed(speed_sp=dir*750, time_sp=250)
-
-    # Wait until both motors are stopped:
-    while any(m.state for m in (leftMotor, rightMotor)):
-        sleep(0.1)
 
 def check_ring():
     colors = ("unknown", "black", "blue", "green", "yellow", "red", "white", "brown")
-    print(colors[colorSensor.value()])
     if (colorSensor.value() == 1):
         print("black")
-        rightMotor.run_direct(duty_cycle_sp = 0)
-        leftMotor.run_direct(duty_cycle_sp = 0)
-        sleep(0.1)
-        rightMotor.run_direct(duty_cycle_sp = -75)
-        leftMotor.run_direct(duty_cycle_sp = -75)
-        turn(4)
-        rightMotor.run_direct(duty_cycle_sp = 0)
-        leftMotor.run_direct(duty_cycle_sp = 0)
+        # Reverse
+        drive(-100, -100, 0)
+        sleep(1.1)
+        #Turn
+        if ((ultraSensor.value() / 10) >= SEARCH_DISTANCE):
+            drive(100, 100, 0)
+            turn(CLOCKWISE, 180)
+        brake()
 
-# Makes the robot say something
-#Sound.speak('Exterminate').wait()
-#sleep(0.5)
-#Sound.speak('Exterminate').wait()
-#sleep(1)
-#Sound.speak('Prepare for doom').wait()
-Sound.tone([(784, 200, 100),
-            (784, 200, 100),
-            (784, 200, 100),
-            (659, 2000, 1300),
-            (698, 200, 100),
-            (698, 200, 100),
-            (698, 200, 100),
-            (587, 3000, 2000),
-            (262, 200, 100),
-            (784, 200, 100),
-            (784, 200, 100),
-            (784, 200, 100),
-            (659, 200, 100),
-            (880, 200, 100),
-            (880, 200, 100),
-            (880, 200, 100),
-            (784, 200, 100),
-            (1319, 200, 100),
-            (1319, 200, 100),
-            (1319, 200, 100),
-            (1047, 800, 400)])
+def aesthetics():
+    # Makes the robot say something
+    Sound.speak('Exterminate').wait()
+    sleep(0.5)
+    Sound.speak('Exterminate').wait()
+    sleep(1)
+    Sound.speak('Prepare for doom').wait()
+
+    # Beethoven's 5th:
+    Sound.tone([(440, 150, 20), #A
+                (440, 150, 20),
+                (440, 150, 20),
+                (349, 1900, 500), #F
+                (392, 150, 20), #G
+                (392, 150, 20),
+                (392, 150, 20),
+                (330, 1900, 500), #E
+                (440, 140, 20), #A
+                (440, 140, 20),
+                (440, 140, 20),
+                (349, 140, 20), #F
+                (466, 140, 20), #Bb
+                (466, 140, 20),
+                (466, 140, 20),
+                (440, 140, 20), #A
+                (698, 140, 20), #F
+                (698, 140, 20),
+                (698, 140, 20),
+                (587, 140, 100)]) #D
+
+def aesthetics_thread():
+    t = Thread(target=aesthetics)
+    t.setDaemon(True)
+    t.start()
+
+# aesthetics_thread()
 init_turret(2) # Begin tracking target after 2 seconds of delay
 sleep(3)
 start()
 # Run the robot until a button is pressed.
 while not (btn.any()):
     check_ring()
-    #chase_target()
+    chase_target()
 
 # Stop the motors before exiting.
 rightMotor.stop()
