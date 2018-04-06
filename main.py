@@ -2,6 +2,7 @@
 
 from time import sleep
 from threading import Thread
+from multiprocessing import Process, Value
 import sys, os
 
 from ev3dev.ev3 import *
@@ -31,8 +32,8 @@ def drive(left, right, time):
         leftMotor.run_direct(duty_cycle_sp = -left)
         rightMotor.run_direct(duty_cycle_sp = -right)
     else:
-        leftMotor.run_timed(speed_sp=left, time_sp=time*1000)
-        rightMotor.run_timed(speed_sp=right, time_sp=time*1000)
+        leftMotor.run_timed(speed_sp=left, time_sp=time * 1000)
+        rightMotor.run_timed(speed_sp=right, time_sp=time * 1000)
 
 def drift():
     drive(55, 100, 1)
@@ -72,25 +73,26 @@ REVOLUTION = 360
 SPEED = REVOLUTION * 1 # In degrees per second
 
 # Output variable
-angle_target = 0 # The angle (in degrees) that a target was last found at
-found = False # Whether target has been found
+angle_target = Value("i", 0) # The angle (in degrees) that a target was last found at
 # 0 = straight ahead, -90 to the left, 90 to the right etc.
 
-# Initialise the turret thread, independent from the main program
+# Initialise the turret process, independent from the main program
 def init_turret(delay):
     ultraMotor.reset() # Set the current angle to 0
     ultraMotor.stop_action = "brake"
-    # https://sites.google.com/site/ev3python/learn_ev3_python/threads
-    t = Thread(target=lock_turret, args=(delay,))
-    t.setDaemon(True)
-    t.start() # Initialise thread
+    # Begin a new process which will run concurrently
+    p = Process(target=lock_turret, args=(delay, angle_target))
+    p.daemon = True
+    p.start() # Initialise process
 
 # Turret thread
 # Thread runs a huge loop to scan for a target within SEARCH_DISTANCE
-def lock_turret(delay):
-    global found
+def lock_turret(delay, angle):
+    ultraMotor = MediumMotor(OUTPUT_C)
+    assert ultraMotor.connected, "Error: Ultra motor not connected"
     direction = -1 # Scan direction: 1 = clockwise | -1 = anticlockwise
     distance = 100 # The distance (in centimetres) output of the ultra sensor
+    found = False # Whether target has been found
     sleep(delay) # Delay to allow operator to move away before turret rotates
     ultraMotor.run_forever(speed_sp = direction * SPEED) # Scan to the left
     while True: # Huge loop
@@ -112,9 +114,10 @@ def lock_turret(delay):
             direction *= -1 # Reset to previous direction
         # Then keep rotating and scanning for a target within SEARCH_DISTANCE
         distance = ultraSensor.value() # Output distance in millimetres
-        # Found a target! Store in angle_target
+        # Found a target! Store in angle
         if (distance <= SEARCH_DISTANCE * 10 and found == False):
-            found_target()
+            angle.value = fix_angle(ultraMotor.position)
+            ultraMotor.stop() # Stop scanning
             found = True
         # Lost the target - scan the immediate area (within 45 degrees)
         elif (distance > SEARCH_DISTANCE * 10 and found == True):
@@ -126,7 +129,8 @@ def lock_turret(delay):
             while any(ultraMotor.state):
                 sleep(0.05)
                 if (distance <= SEARCH_DISTANCE * 10): # Found the target again!
-                    found_target()
+                    angle.value = fix_angle(ultraMotor.position)
+                    ultraMotor.stop() # Stop scanning
                     found = True
             # The target changed direction, resume scan in the opposite direction
             if (found == False): # Couldn't find target
@@ -135,21 +139,19 @@ def lock_turret(delay):
                 ultraMotor.run_forever(speed_sp = direction * SPEED)
         sleep(0.05)
 
-# Found start of target, store it into angle_target
-def found_target(): # (replaced the averaging algorithm with a delay)
-    global angle_target
-    # sleep(0.1) # Continue rotating briefly, estimating centre of target
-    angle_target = ultraMotor.position
+# Change {-360 <= angle <= 360} to {-180 <= angle <= 180}
+def fix_angle(angle):
     # {-180 <= angle <= 180} 270 degrees clockwise = 90 degrees anticlockwise
-    if (angle_target < -180):
-        angle_target += 360
-    elif (angle_target > 180):
-        angle_target -= 360
-    ultraMotor.stop()
+    if (angle < -180):
+        angle += 360
+    elif (angle > 180):
+        angle -= 360
     print("turret: found target")
-    print("(target at %d degrees)" % angle_target)
-# Can now obtain location of target from angle_target
+    print("(target at %d degrees)" % angle)
+    return angle
+# Can now obtain location of target from angle_target.value
 # </HANDLE_TURRET>
+
 
 # Initialise the chase thread, independent from the main program
 chase = True
@@ -160,63 +162,36 @@ def init_chase(delay):
 
 def chase_target(delay):
     global chase
-    global angle_target
-    global found
+    last = 0 # Angle the target was last chased at
     sleep(delay)
     while True:
+        angle = angle_target.value
         # If the robot isn't directly facing the opponent
         # stop and straighten up
-        print("chase: found state is %s" % found)
-        if (chase == True and (angle_target <= -15 or angle_target >= 15)):
-            print("chase: chasing target at %d degrees" % angle_target)
+        if (chase == True and (angle <= -15 or angle >= 15) and angle != last):
+            print("chase: chasing target at %d degrees" % angle)
             rightMotor.stop()
             leftMotor.stop()
             sleep(0.2) # Delay after stopping
-            if (angle_target < 0):
+            if (angle < 0):
                 # Turn robot clockwise
                 print("chase: turning clockwise")
-                turn(CLOCKWISE, angle_target * -1)
+                turn(CLOCKWISE, angle * -1)
                 # drive(100, 100, 0)
             else:
                 # Turn robot anticlockwise
                 print("chase: turning anticlockwise")
-                turn(ANTICLOCKWISE, angle_target)
+                turn(ANTICLOCKWISE, angle)
                 # drive(100, 100, 0)
             print("chase: finished turning")
-            print("chase: (target now at %d degrees)" % angle_target)
-            angle_target = 0
+            print("chase: (target now at %d degrees)" % angle)
+            last = angle
         # If opponent is straight ahead, charge
-        if (chase == True and (angle_target > -15 or angle_target < 15)):
+        if (chase == True and (angle > -15 or angle < 15)):
             print("drive: locked on target, chasing")
             #drive(100,100, 0)
-        sleep(1)
-        print("(chase: target now at %d degrees)" % angle_target)
-
-    # while (chase == True):
-    #     # If the robot isn't directly facing the opponent
-    #     # stop and straighten up
-    #     if (angle_target <= -20 or angle_target >= 20):
-    #         print("chase: chasing target at %d degrees" % angle_target)
-    #         rightMotor.stop()
-    #         leftMotor.stop()
-    #         sleep(0.2) # Delay after stopping
-    #         if (angle_target < 0):
-    #             # Turn robot clockwise
-    #             print("chase: turning clockwise")
-    #             turn(CLOCKWISE, angle_target * -1)
-    #         else:
-    #             # Turn robot anticlockwise
-    #             print("chase: turning anticlockwise")
-    #             turn(ANTICLOCKWISE, angle_target)
-    #         print("chase: finished turning")
-    #         print("chase: (target now at %d degrees)" % angle_target)
-    #         angle_target = 0
-    #     # If oppenent is straight ahead, charge
-    #     else:
-    #         print("drive: locked on target, chasing")
-    #     #drive(100, 100, 0)
-    #     sleep(1)
-    #     print("(chase: target now at %d degrees)" % angle_target)
+        sleep(0.05)
+        print("(chase: target now at %d degrees)" % angle)
 
 
 def start():
