@@ -137,7 +137,7 @@ def lock_turret(delay, angle):
                 sleep(0.2) # Delay after stopping
                 direction *= -1 # Switch scan direction and resume scanning
                 ultraMotor.run_forever(speed_sp = direction * SPEED)
-        sleep(0.05)
+        sleep(0.02)
 
 # Change {-360 <= angle <= 360} to {-180 <= angle <= 180}
 def fix_angle(angle):
